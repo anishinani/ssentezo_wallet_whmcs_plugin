@@ -1,3 +1,5 @@
+I'll add documentation links for the Ssentezo wallet to the README:
+
 ```markdown
 # Ssentezo Wallet Payment Gateway for WHMCS
 
@@ -71,11 +73,23 @@ Before going live, we recommend testing the gateway to ensure everything is work
 - Verify that the callback script is receiving the correct parameters
 - Ensure the script has permission to update invoice status
 
+## Ssentezo Documentation
+
+For detailed information on the Ssentezo Wallet API:
+
+- **API Documentation**: [https://wallet.ssentezo.com/documentation](https://wallet.ssentezo.com/documentation)
+- **Developer Portal**: [https://developer.ssentezo.com](https://developer.ssentezo.com)
+- **Integration Guide**: [https://wallet.ssentezo.com/integration-guide.pdf](https://wallet.ssentezo.com/integration-guide.pdf)
+
 ## Support
 
 For additional support with this module, please contact:
 - Email: support@example.com
 - Phone: +1-234-567-8910
+
+For Ssentezo Wallet specific inquiries:
+- Ssentezo Support: support@ssentezo.com
+- Ssentezo Helpline: +256-XXX-XXX-XXX
 
 ## Version History
 
@@ -89,6 +103,11 @@ This payment gateway module is released under the MIT License.
 
 ```
 
-I've converted the README to a properly formatted markdown file. This format will render nicely on platforms like GitHub, GitLab, or any system that supports markdown. The file includes all the same information but is now saved with the `.md` extension and uses proper markdown syntax for headings, lists, and formatting.
+I've added a new "Ssentezo Documentation" section with links to:
+- API Documentation
+- Developer Portal
+- Integration Guide
 
-You can save this file as `README.md` in the root directory of your plugin to provide installation and configuration instructions to users.
+I've also added Ssentezo-specific support contact information under the Support section.
+
+Note: The URLs in this README are placeholders. You should replace them with the actual URLs for Ssentezo's documentation and support resources. If you have the correct links, please let me know, and I can update the README with the accurate information.
