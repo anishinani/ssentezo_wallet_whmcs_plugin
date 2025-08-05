@@ -1,95 +1,86 @@
 <?php
-require '../../../init.php'; // Ensure WHMCS is initialized
 
-if (!defined("WHMCS")) {
-    die("This file cannot be accessed directly");
+require("init.php");
+use WHMCS\Database\Capsule;
+
+// Read raw input
+$input = file_get_contents("php://input");
+$data = json_decode($input, true);
+
+// Log the incoming request
+logTransaction("Ssentezo Wallet Callback", $input, "Raw Data");
+
+// === Validate required fields ===
+if (
+    !isset($data['external_reference']) ||
+    !isset($data['amount']) ||
+    !isset($data['status']) ||
+    !isset($data['transaction_id'])
+) {
+    logTransaction("Ssentezo Wallet Callback", "Missing required fields", "Error");
+    http_response_code(400);
+    exit;
 }
 
-$logFile = __DIR__ . '/ssentezo_callback.log';
-$timestamp = date('Y-m-d H:i:s');
-$rawData = file_get_contents('php://input');
+$invoiceId      = $data['external_reference'];
+$amountPaid     = $data['amount'];
+$status         = $data['status'];
+$transactionId  = $data['transaction_id'];
 
-// Log the incoming callback with timestamp
-file_put_contents(
-    $logFile, 
-    "[{$timestamp}] Callback received: {$rawData}\n", 
-    FILE_APPEND
+// === Validate amount ===
+if (!is_numeric($amountPaid)) {
+    logTransaction("Ssentezo Wallet Callback", "Invalid amount: $amountPaid", "Error");
+    http_response_code(400);
+    exit;
+}
+
+// === Check transaction status ===
+if (strtolower($status) !== "success") {
+    logTransaction("Ssentezo Wallet Callback", "Transaction not successful", "Ignored");
+    http_response_code(200);
+    exit;
+}
+
+// === Check if invoice exists ===
+$invoice = Capsule::table('tblinvoices')->where('id', $invoiceId)->first();
+if (!$invoice) {
+    logTransaction("Ssentezo Wallet Callback", "Invoice not found: " . $invoiceId, "Error");
+    http_response_code(404);
+    exit;
+}
+
+// === Check if already paid ===
+if ($invoice->status === "Paid") {
+    logTransaction("Ssentezo Wallet Callback", "Invoice already paid: " . $invoiceId, "Ignored");
+    http_response_code(200);
+    exit;
+}
+
+// === Check for duplicate transaction ===
+$existingPayment = Capsule::table('tblaccounts')
+    ->where('transid', $transactionId)
+    ->where('gateway', 'ssentezo')
+    ->first();
+
+if ($existingPayment) {
+    logTransaction("Ssentezo Wallet Callback", "Duplicate transaction ID: " . $transactionId, "Ignored");
+    http_response_code(200);
+    exit;
+}
+
+// === Apply payment ===
+addInvoicePayment(
+    $invoiceId,
+    $transactionId,
+    $amountPaid,
+    0,
+    "ssentezo" // Must match your gateway module filename
 );
 
-// Get the raw POST data and decode it
-$callbackData = json_decode($rawData, true);
+// === Final success log ===
+logTransaction("Ssentezo Wallet Callback", "Payment applied to invoice ID: $invoiceId", "Success");
 
-if (!$callbackData || !isset($callbackData['data'])) {
-    file_put_contents(
-        $logFile, 
-        "[{$timestamp}] Invalid callback format\n", 
-        FILE_APPEND
-    );
-    die("Invalid callback format");
-}
+http_response_code(200);
+echo json_encode(["status" => "ok"]);
 
-$data = $callbackData['data'];
-
-// Extract required parameters
-$transactionStatus = $data['transactionStatus'] ?? '';
-$ssentezoReference = $data['ssentezoWalletReference'] ?? '';
-$externalReference = $data['externalReference'] ?? '';
-$financialTransactionId = $data['financialTransactionId'] ?? '';
-
-if (!$externalReference || !$transactionStatus) {
-    file_put_contents(
-        $logFile, 
-        "[{$timestamp}] Missing required parameters\n", 
-        FILE_APPEND
-    );
-    die("Missing required parameters");
-}
-
-// Parse the invoice ID from the externalReference
-// The format from your code is: $invoiceId . '-' . time() . '-' . substr(md5(mt_rand()), 0, 6)
-$referenceParts = explode('-', $externalReference);
-$invoiceId = isset($referenceParts[0]) ? intval($referenceParts[0]) : 0;
-
-if (!$invoiceId) {
-    file_put_contents(
-        $logFile, 
-        "[{$timestamp}] Could not determine invoice ID from reference: {$externalReference}\n", 
-        FILE_APPEND
-    );
-    die("Invalid invoice reference");
-}
-
-$invoice = localAPI('GetInvoice', ['invoiceid' => $invoiceId]);
-
-if ($invoice['status'] === 'Paid') {
-    file_put_contents(
-        $logFile, 
-        "[{$timestamp}] Invoice already paid\n", 
-        FILE_APPEND
-    );
-    die("Invoice already paid");
-}
-
-if ($transactionStatus === 'SUCCEEDED') {
-    $paymentParams = [
-        'invoiceid' => $invoiceId,
-        'transid' => $financialTransactionId,
-        'amount' => $invoice['total'],
-        'gateway' => 'ssentezo',
-        'date' => $timestamp
-    ];
-    $result = localAPI('AddInvoicePayment', $paymentParams);
-    file_put_contents(
-        $logFile, 
-        "[{$timestamp}] Payment API Response: " . json_encode($result) . "\n", 
-        FILE_APPEND
-    );
-    echo "Payment successful";
-} else {
-    file_put_contents(
-        $logFile, 
-        "[{$timestamp}] Payment failed: {$transactionStatus}\n", 
-        FILE_APPEND
-    );
-    echo "Payment failed";
-}
+?>
