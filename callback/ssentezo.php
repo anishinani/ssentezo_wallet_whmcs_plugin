@@ -3,84 +3,87 @@
 require("init.php");
 use WHMCS\Database\Capsule;
 
-// Read raw input
+// === Gateway Module Name (MUST match your module folder) ===
+$gatewayModuleName = 'ssentezo'; // Ensure this matches the filename e.g. modules/gateways/ssentezo.php
+
+// === Capture and Decode JSON Payload ===
 $input = file_get_contents("php://input");
 $data = json_decode($input, true);
 
-// Log the incoming request
-logTransaction("Ssentezo Wallet Callback", $input, "Raw Data");
+// === Log Raw Payload ===
+logTransaction($gatewayModuleName, ['input' => $input], "Incoming Request");
 
-// === Validate required fields ===
+// === Validate Required Fields ===
 if (
     !isset($data['external_reference']) ||
     !isset($data['amount']) ||
     !isset($data['status']) ||
     !isset($data['transaction_id'])
 ) {
-    logTransaction("Ssentezo Wallet Callback", "Missing required fields", "Error");
+    logTransaction($gatewayModuleName, $data, "❌ Missing Required Fields");
     http_response_code(400);
     exit;
 }
 
+// === Assign Variables ===
 $invoiceId      = $data['external_reference'];
 $amountPaid     = $data['amount'];
-$status         = $data['status'];
+$status         = strtolower($data['status']);
 $transactionId  = $data['transaction_id'];
 
-// === Validate amount ===
+// === Validate Amount ===
 if (!is_numeric($amountPaid)) {
-    logTransaction("Ssentezo Wallet Callback", "Invalid amount: $amountPaid", "Error");
+    logTransaction($gatewayModuleName, $data, "❌ Invalid Amount");
     http_response_code(400);
     exit;
 }
 
-// === Check transaction status ===
-if (strtolower($status) !== "success") {
-    logTransaction("Ssentezo Wallet Callback", "Transaction not successful", "Ignored");
+// === Check Transaction Status ===
+if ($status !== "success") {
+    logTransaction($gatewayModuleName, $data, "⚠️ Transaction Not Successful");
     http_response_code(200);
     exit;
 }
 
-// === Check if invoice exists ===
+// === Validate Invoice Exists ===
 $invoice = Capsule::table('tblinvoices')->where('id', $invoiceId)->first();
 if (!$invoice) {
-    logTransaction("Ssentezo Wallet Callback", "Invoice not found: " . $invoiceId, "Error");
+    logTransaction($gatewayModuleName, $data, "❌ Invoice Not Found: $invoiceId");
     http_response_code(404);
     exit;
 }
 
-// === Check if already paid ===
+// === Check if Already Paid ===
 if ($invoice->status === "Paid") {
-    logTransaction("Ssentezo Wallet Callback", "Invoice already paid: " . $invoiceId, "Ignored");
+    logTransaction($gatewayModuleName, $data, "✅ Invoice Already Paid: $invoiceId");
     http_response_code(200);
     exit;
 }
 
-// === Check for duplicate transaction ===
-$existingPayment = Capsule::table('tblaccounts')
+// === Prevent Duplicate Transaction ===
+$existing = Capsule::table('tblaccounts')
     ->where('transid', $transactionId)
-    ->where('gateway', 'ssentezo')
+    ->where('gateway', $gatewayModuleName)
     ->first();
 
-if ($existingPayment) {
-    logTransaction("Ssentezo Wallet Callback", "Duplicate transaction ID: " . $transactionId, "Ignored");
+if ($existing) {
+    logTransaction($gatewayModuleName, $data, "⚠️ Duplicate Transaction ID: $transactionId");
     http_response_code(200);
     exit;
 }
 
-// === Apply payment ===
+// === Record Payment ===
 addInvoicePayment(
     $invoiceId,
     $transactionId,
     $amountPaid,
     0,
-    "ssentezo" // Must match your gateway module filename
+    $gatewayModuleName
 );
 
-// === Final success log ===
-logTransaction("Ssentezo Wallet Callback", "Payment applied to invoice ID: $invoiceId", "Success");
+// === Log Success ===
+logTransaction($gatewayModuleName, $data, "✅ Payment Applied to Invoice $invoiceId");
 
 http_response_code(200);
 echo json_encode(["status" => "ok"]);
-
 ?>
