@@ -1,22 +1,15 @@
 <?php
-// === Detailed Callback Logging (Raw Payload) ===
-// This logs the full, raw request for debugging purposes.
-$rawLogFile = __DIR__ . '/raw_callback_log.txt';
-$rawPayload = file_get_contents('php://input');
 
-$requestData = [
-    'time' => date('Y-m-d H:i:s'),
-    'method' => $_SERVER['REQUEST_METHOD'],
-    'query' => $_GET,
-    'post' => $_POST,
-    'raw' => $rawPayload,
-    'headers' => function_exists('getallheaders') ? getallheaders() : []
-];
+// === File Includes ===
+// These must be at the very top to initialize the WHMCS environment.
+// The path '.../../../..' is to navigate from 'modules/gateways/callback/' to the WHMCS root.
+require_once __DIR__ . '/../../../init.php';
+require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
+require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 
-file_put_contents($rawLogFile, print_r($requestData, true) . "\n----------------------\n", FILE_APPEND);
+use WHMCS\Database\Capsule;
 
 // === Audit Trail Logging ===
-// This logs key events in a structured, easy-to-read format.
 $auditLogFile = __DIR__ . '/payment_audit_trail.log';
 
 function logAuditTrail($message, $data = []) {
@@ -33,16 +26,11 @@ function logAuditTrail($message, $data = []) {
     file_put_contents($auditLogFile, $logEntry, FILE_APPEND);
 }
 
-require("../../../init.php");
-require("../../../includes/functions.php");
-require("../../../includes/gatewayfunctions.php");
-use WHMCS\Database\Capsule;
-
 // === Gateway Module Name (MUST match your module folder) ===
 $gatewayModuleName = 'ssentezo';
 
 // === Capture and Decode JSON Payload ===
-$input = file_get_contents("php://input");
+$input = @file_get_contents('php://input');
 $payload = json_decode($input, true);
 
 // Log incoming request to the audit trail
@@ -52,7 +40,7 @@ logAuditTrail("Incoming Request", ['payload_length' => strlen($input)]);
 if (!isset($payload['data'])) {
     logAuditTrail("❌ 'data' key is missing from payload", ['payload' => $payload]);
     http_response_code(400);
-    exit;
+    die();
 }
 
 $data = $payload['data']; // Access the nested 'data' object
@@ -65,7 +53,7 @@ if (
 ) {
     logAuditTrail("❌ Missing Required Fields", $data);
     http_response_code(400);
-    exit;
+    die();
 }
 
 // === Assign Variables (using correct field names from the wallet response) ===
@@ -81,41 +69,22 @@ logAuditTrail("Processing Transaction", [
 ]);
 
 // === Check Transaction Status ===
-if ($status !== "succeeded") { // Note: status is 'SUCCEEDED' in the response
+if ($status !== "succeeded") {
     logAuditTrail("⚠️ Transaction Not Successful", ['invoice_id' => $invoiceId, 'status' => $status]);
     http_response_code(200);
-    exit;
+    die();
 }
 
-// === Validate Invoice Exists & Get Amount ===
+// === Validate Invoice ID & Transaction ID ===
+// These functions will die() on their own if the checks fail
+$invoiceId = checkCbInvoiceID($invoiceId, $gatewayModuleName);
+checkCbTransID($transactionId);
+
+// === Get Invoice Details ===
 $invoice = Capsule::table('tblinvoices')->where('id', $invoiceId)->first();
-if (!$invoice) {
-    logAuditTrail("❌ Invoice Not Found", ['invoice_id' => $invoiceId]);
-    http_response_code(404);
-    exit;
-}
-
 $amountPaid = $invoice->total; // Get the total amount from the invoice
+
 logAuditTrail("Fetched Amount from Invoice", ['invoice_id' => $invoiceId, 'amount' => $amountPaid]);
-
-// === Check if Already Paid ===
-if ($invoice->status === "Paid") {
-    logAuditTrail("✅ Invoice Already Paid", ['invoice_id' => $invoiceId]);
-    http_response_code(200);
-    exit;
-}
-
-// === Prevent Duplicate Transaction ===
-$existing = Capsule::table('tblaccounts')
-    ->where('transid', $transactionId)
-    ->where('gateway', $gatewayModuleName)
-    ->first();
-
-if ($existing) {
-    logAuditTrail("⚠️ Duplicate Transaction ID", ['invoice_id' => $invoiceId, 'transaction_id' => $transactionId]);
-    http_response_code(200);
-    exit;
-}
 
 // === Record Payment ===
 addInvoicePayment(
@@ -128,7 +97,9 @@ addInvoicePayment(
 
 // === Log Success ===
 logAuditTrail("✅ Payment Applied to Invoice", ['invoice_id' => $invoiceId, 'transaction_id' => $transactionId, 'amount_paid' => $amountPaid]);
+logTransaction($gatewayModuleName, $data, "Successful");
 
 http_response_code(200);
 echo json_encode(["status" => "ok"]);
+
 ?>
