@@ -2,7 +2,6 @@
 
 // === File Includes ===
 // These must be at the very top to initialize the WHMCS environment.
-// The path '.../../../..' is to navigate from 'modules/gateways/callback/' to the WHMCS root.
 require_once __DIR__ . '/../../../init.php';
 require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 require_once __DIR__ . '/../../../includes/invoicefunctions.php';
@@ -10,6 +9,7 @@ require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 use WHMCS\Database\Capsule;
 
 // === Audit Trail Logging ===
+// This logs key events in a structured, easy-to-read format.
 $auditLogFile = __DIR__ . '/payment_audit_trail.log';
 
 function logAuditTrail($message, $data = []) {
@@ -57,15 +57,22 @@ if (
 }
 
 // === Assign Variables (using correct field names from the wallet response) ===
-$invoiceId      = $data['externalReference'];
-$status         = strtolower($data['transactionStatus']);
-$transactionId  = $data['financialTransactionId'];
+$externalReference = $data['externalReference'];
+$status            = strtolower($data['transactionStatus']);
+$transactionId     = $data['financialTransactionId'];
+
+// === Extract Invoice ID from External Reference ===
+// The externalReference is in the format 'invoiceId-timestamp-random'
+// We need to extract only the invoiceId part
+$parts = explode('-', $externalReference, 2);
+$invoiceId = $parts[0];
 
 // Log key variables for tracking
 logAuditTrail("Processing Transaction", [
-    'invoice_id' => $invoiceId,
-    'transaction_id' => $transactionId,
-    'status' => $status
+    'external_reference' => $externalReference,
+    'invoice_id'         => $invoiceId,
+    'transaction_id'     => $transactionId,
+    'status'             => $status
 ]);
 
 // === Check Transaction Status ===
@@ -76,13 +83,12 @@ if ($status !== "succeeded") {
 }
 
 // === Validate Invoice ID & Transaction ID ===
-// These functions will die() on their own if the checks fail
 $invoiceId = checkCbInvoiceID($invoiceId, $gatewayModuleName);
 checkCbTransID($transactionId);
 
 // === Get Invoice Details ===
 $invoice = Capsule::table('tblinvoices')->where('id', $invoiceId)->first();
-$amountPaid = $invoice->total; // Get the total amount from the invoice
+$amountPaid = $invoice->total;
 
 logAuditTrail("Fetched Amount from Invoice", ['invoice_id' => $invoiceId, 'amount' => $amountPaid]);
 
@@ -91,7 +97,7 @@ addInvoicePayment(
     $invoiceId,
     $transactionId,
     $amountPaid,
-    0, // Replace 0 with the actual fee if the wallet provides it
+    0,
     $gatewayModuleName
 );
 
@@ -99,7 +105,10 @@ addInvoicePayment(
 logAuditTrail("✅ Payment Applied to Invoice", ['invoice_id' => $invoiceId, 'transaction_id' => $transactionId, 'amount_paid' => $amountPaid]);
 logTransaction($gatewayModuleName, $data, "Successful");
 
-http_response_code(200);
-echo json_encode(["status" => "ok"]);
+// === Redirect Client to Invoice Page ===
+$systemUrl = Capsule::table('tblconfiguration')->where('setting', 'SystemURL')->value('value');
+$redirectUrl = $systemUrl . 'viewinvoice.php?id=' . $invoiceId;
 
+header("Location: " . $redirectUrl);
+exit();
 ?>
