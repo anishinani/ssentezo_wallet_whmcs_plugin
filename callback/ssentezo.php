@@ -1,4 +1,3 @@
-
 <?php
 // === Detailed Callback Logging ===
 // Path to your log file (ensure it's writable by the web server)
