@@ -33,7 +33,7 @@ function logAuditTrail($message, $data = []) {
     file_put_contents($auditLogFile, $logEntry, FILE_APPEND);
 }
 
-require("init.php");
+require("../../../init.php");
 use WHMCS\Database\Capsule;
 
 // === Gateway Module Name (MUST match your module folder) ===
