@@ -1,3 +1,4 @@
+
 <?php
 // === Detailed Callback Logging ===
 // Path to your log file (ensure it's writable by the web server)
@@ -18,7 +19,6 @@ $requestData = [
 
 // Append to log file
 file_put_contents($logFile, print_r($requestData, true) . "\n----------------------\n", FILE_APPEND);
-
 
 require("init.php");
 use WHMCS\Database\Capsule;
