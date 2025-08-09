@@ -34,6 +34,8 @@ function logAuditTrail($message, $data = []) {
 }
 
 require("../../../init.php");
+require("../../../includes/functions.php");
+require("../../../includes/gatewayfunctions.php");
 use WHMCS\Database\Capsule;
 
 // === Gateway Module Name (MUST match your module folder) ===
