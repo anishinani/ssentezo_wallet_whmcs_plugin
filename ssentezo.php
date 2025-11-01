@@ -36,7 +36,7 @@ function ssentezo_config() {
             'FriendlyName' => 'Callback URL',
             'Type' => 'text',
             'Size' => '100',
-            'Default' => 'https://thinkxcloud.com/billing/modules/gateways/callback/ssentezo.php',
+            'Default' => '',
             'Description' => 'Enter your callback URL to receive payment notifications.',
         ],
     ];
@@ -59,7 +59,7 @@ function ssentezo_link($params) {
     $clientFullName = trim($params['clientdetails']['firstname'] . ' ' . $params['clientdetails']['lastname']);
     $apiUsername = $params['apiUsername'];
     $apiKey = $params['apiKey'];
-    $callbackUrl = !empty($params['callbackUrl']) ? $params['callbackUrl'] : 'https://thinkxcloud.com/billing/modules/gateways/callback/ssentezo.php';
+    $callbackUrl = $params['callbackUrl'];
 
     // Processing payment request
     if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['phone_number'])) {
