@@ -108,11 +108,40 @@ function ssentezo_link($params) {
         $systemUrl = $params['systemurl'];
         
         $loadingPage = '
-        <div id="ssentezo-payment-loader" style="text-align: center; padding: 40px 20px;">
+        <div id="ssentezo-payment-loader">
             <style>
+                #ssentezo-payment-loader {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    z-index: 999999;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
                 .ssentezo-loader-container {
                     max-width: 500px;
-                    margin: 0 auto;
+                    width: 100%;
+                    background: white;
+                    border-radius: 16px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                    padding: 40px;
+                    text-align: center;
+                    animation: slideUp 0.5s ease-out;
+                }
+                @keyframes slideUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(30px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
                 }
                 .ssentezo-spinner {
                     border: 4px solid #f3f3f3;
