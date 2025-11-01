@@ -63,7 +63,22 @@ function ssentezo_link($params) {
 
     // Processing payment request
     if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['phone_number'])) {
+        // Validate credentials
+        if (empty($apiUsername) || empty($apiKey) || empty($callbackUrl)) {
+            logTransaction("ssentezo", [
+                'invoice' => $invoiceId,
+                'error' => 'Missing gateway configuration'
+            ], "Error");
+            return '<div class="error">Payment gateway is not properly configured. Please contact support.</div>';
+        }
+        
         $phoneNumber = trim($_POST['phone_number']);
+        
+        // Validate phone number
+        if (empty($phoneNumber)) {
+            return '<div class="error">Please enter a valid phone number.</div>';
+        }
+        
         $paymentUrl = "https://wallet.ssentezo.com/api/deposit";
         
         // Generate a unique reference for this payment attempt
@@ -91,12 +106,50 @@ function ssentezo_link($params) {
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         
         $response = curl_exec($ch);
+        $curlError = curl_error($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Log the payment attempt for debugging (optional)
+        // Check for curl errors
+        if ($curlError) {
+            logTransaction("ssentezo", [
+                'reference' => $uniqueReference,
+                'invoice' => $invoiceId,
+                'curl_error' => $curlError
+            ], "Error");
+            
+            return '<div class="ssentezo-payment-container">
+                        <div style="padding: 20px; background: #f8f9fa; border-radius: 8px;">
+                            <h3 style="color: #dc3545; margin-bottom: 10px;">Connection Error</h3>
+                            <p style="color: #7f8c8d;">Unable to connect to the payment gateway. Please try again later or contact support.</p>
+                            <a href="viewinvoice.php?id=' . $invoiceId . '" style="display: inline-block; margin-top: 15px; color: #007bff;">Return to Invoice</a>
+                        </div>
+                    </div>';
+        }
+        
+        // Check for HTTP errors
+        if ($httpCode < 200 || $httpCode >= 300) {
+            logTransaction("ssentezo", [
+                'reference' => $uniqueReference,
+                'invoice' => $invoiceId,
+                'response' => $response,
+                'status_code' => $httpCode
+            ], "Error");
+            
+            return '<div class="ssentezo-payment-container">
+                        <div style="padding: 20px; background: #f8f9fa; border-radius: 8px;">
+                            <h3 style="color: #dc3545; margin-bottom: 10px;">Payment Request Failed</h3>
+                            <p style="color: #7f8c8d;">Unable to process your payment request. Please try again or contact support.</p>
+                            <a href="viewinvoice.php?id=' . $invoiceId . '" style="display: inline-block; margin-top: 15px; color: #007bff;">Return to Invoice</a>
+                        </div>
+                    </div>';
+        }
+        
+        // Log the successful payment request
         logTransaction("ssentezo", [
             'reference' => $uniqueReference,
             'invoice' => $invoiceId,

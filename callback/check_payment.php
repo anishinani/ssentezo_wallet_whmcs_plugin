@@ -1,8 +1,4 @@
 <?php
-if (!defined("WHMCS")) {
-    die("This file cannot be accessed directly");
-}
-
 require_once __DIR__ . '/../../../init.php';
 require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 
@@ -28,14 +24,14 @@ if (!$invoice) {
     exit();
 }
 
+// Basic security: Only return minimal information
 // Check if invoice is paid
 $status = ($invoice->status === 'Paid') ? 'paid' : 'pending';
 
+// Return only the necessary status information
 header('Content-Type: application/json');
 echo json_encode([
-    'status' => $status,
-    'invoice_id' => $invoiceId,
-    'amount' => $invoice->total
+    'status' => $status
 ]);
 ?>
 
