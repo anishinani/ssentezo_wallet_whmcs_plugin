@@ -9,11 +9,12 @@ if (empty($params['type'])) {
 }
 
 $invoiceId = isset($_GET['invoiceid']) ? (int) $_GET['invoiceid'] : 0;
+$reference = isset($_GET['reference']) ? (string) $_GET['reference'] : '';
 $token = isset($_GET['token']) ? (string) $_GET['token'] : '';
 $apiKey = isset($params['apiKey']) ? (string) $params['apiKey'] : '';
-$expected = ssentezo_pollToken($apiKey, $invoiceId);
+$expected = ssentezo_pollToken($apiKey, $invoiceId, $reference);
 
-if ($invoiceId <= 0 || $apiKey === '' || !hash_equals($expected, $token)) {
+if ($invoiceId <= 0 || $reference === '' || $apiKey === '' || !hash_equals($expected, $token)) {
     ssentezo_page('Ssentezo', '<h1>Payment session expired</h1><p>Open the invoice to check whether the payment was received.</p>');
 }
 
@@ -28,6 +29,6 @@ if ($invoice && (strtolower($invoice['status']) === 'paid' || $invoice['balance'
 ssentezo_waitingPage(
     $params,
     $invoiceId,
-    '',
-    'Confirming the card payment. You can leave this page open; it will return to the invoice when the payment is recorded.'
+    $reference,
+    'Confirming the card payment with Ssentezo. You can leave this page open. It returns to the invoice when the payment is recorded.'
 );

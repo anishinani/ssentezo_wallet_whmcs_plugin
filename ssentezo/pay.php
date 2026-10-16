@@ -64,7 +64,7 @@ if ($invoice['name'] !== '') {
 }
 
 if ($payMethod === 'card') {
-    if ($currency !== 'UGX') {
+    if (!ssentezo_cardAllowed($currency)) {
         ssentezo_page('Ssentezo', '<h1>Card payment unavailable</h1><p>Visa and Mastercard checkout is available for UGX invoices.</p>' . $backLink);
     }
     if ($invoice['email'] === '' || $invoice['name'] === '') {
@@ -80,7 +80,7 @@ if ($payMethod === 'card') {
         'email' => $invoice['email'],
         'success_callback' => $callbackUrl,
         'failure_callback' => $callbackUrl,
-        'redirect_url' => ssentezo_returnUrl($params, $invoiceId),
+        'redirect_url' => ssentezo_returnUrl($params, $invoiceId, $reference),
     ));
 
     $checkoutUrl = '';

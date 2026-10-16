@@ -103,9 +103,15 @@ function ssentezo_paymentSignature($apiKey, $invoiceId, $amount, $currency)
     return hash_hmac('sha256', $payload, (string) $apiKey);
 }
 
-function ssentezo_pollToken($apiKey, $invoiceId)
+function ssentezo_pollToken($apiKey, $invoiceId, $reference = '')
 {
-    return hash_hmac('sha256', 'poll|' . (int) $invoiceId, (string) $apiKey);
+    return hash_hmac('sha256', 'poll|' . (int) $invoiceId . '|' . (string) $reference, (string) $apiKey);
+}
+
+function ssentezo_cardAllowed($currency)
+{
+    $currency = strtoupper(trim((string) $currency));
+    return in_array($currency, array('UGX', 'USH', 'UGS', 'SHS'), true);
 }
 
 function ssentezo_csrfField()
@@ -320,24 +326,119 @@ function ssentezo_invoiceSnapshot($invoiceId)
     );
 }
 
+function ssentezo_applyCollection(array $params, array $invoice, array $verifiedData, $externalReference)
+{
+    $gatewayName = isset($params['name']) && $params['name'] !== '' ? (string) $params['name'] : 'Ssentezo Wallet';
+    $transactionId = ssentezo_field($verifiedData, 'financialTransactionId');
+    if ($transactionId === '') {
+        $transactionId = ssentezo_field($verifiedData, 'ssentezoWalletReference');
+    }
+    if ($transactionId === '') {
+        $transactionId = (string) $externalReference;
+    }
+
+    if (ssentezo_transactionExists($transactionId)) {
+        return array('status' => 'paid');
+    }
+    if (!function_exists('addInvoicePayment')) {
+        return array('status' => 'pending');
+    }
+
+    $applyAmount = $invoice['balance'];
+    $verifiedCurrency = strtoupper(ssentezo_field($verifiedData, 'currency'));
+    if (isset($verifiedData['amount']) && is_numeric($verifiedData['amount'])) {
+        $verifiedAmount = round((float) $verifiedData['amount'], 2);
+        $sameCurrency = $verifiedCurrency === '' || $invoice['currency'] === '' || $verifiedCurrency === $invoice['currency'];
+        if ($sameCurrency && $verifiedAmount > 0 && ($verifiedAmount + 0.01) < $invoice['balance']) {
+            $applyAmount = $verifiedAmount;
+        }
+    }
+
+    try {
+        addInvoicePayment(
+            $invoice['id'],
+            $transactionId,
+            $applyAmount,
+            0,
+            'ssentezo'
+        );
+    } catch (Throwable $e) {
+        ssentezo_log($gatewayName, array(
+            'invoice' => $invoice['id'],
+            'transaction' => $transactionId,
+            'error' => $e->getMessage(),
+        ), 'Payment Apply Failed');
+        return array('status' => 'pending');
+    }
+
+    ssentezo_log($gatewayName, array(
+        'invoice' => $invoice['id'],
+        'reference' => $externalReference,
+        'transaction' => $transactionId,
+        'amount' => $applyAmount,
+    ), 'Success');
+
+    return array('status' => 'paid');
+}
+
+function ssentezo_settleFromReference(array $params, $invoiceId, $externalReference)
+{
+    $invoiceId = (int) $invoiceId;
+    $externalReference = trim((string) $externalReference);
+    if ($invoiceId <= 0 || ssentezo_invoiceIdFromReference($externalReference) !== $invoiceId) {
+        return array('status' => 'error');
+    }
+
+    $invoice = ssentezo_invoiceSnapshot($invoiceId);
+    if (!$invoice) {
+        return array('status' => 'error');
+    }
+    if (strtolower($invoice['status']) === 'paid' || $invoice['balance'] <= 0) {
+        return array('status' => 'paid');
+    }
+
+    $verified = ssentezo_apiPost($params, 'get_status/' . rawurlencode($externalReference), array(), 8);
+    $verifiedData = array();
+    if (isset($verified['json']['data']) && is_array($verified['json']['data'])) {
+        $verifiedData = $verified['json']['data'];
+    }
+    if (!$verified['ok']) {
+        return array('status' => 'pending');
+    }
+
+    $status = strtoupper(ssentezo_statusFrom($verifiedData));
+    if (ssentezo_isSuccessStatus($status)) {
+        return ssentezo_applyCollection($params, $invoice, $verifiedData, $externalReference);
+    }
+    if (in_array($status, array('FAILED', 'FAILURE', 'CANCELLED', 'CANCELED', 'REJECTED'), true)) {
+        return array('status' => 'failed');
+    }
+
+    return array('status' => 'pending');
+}
+
 function ssentezo_invoiceUrl(array $params, $invoiceId)
 {
     return ssentezo_systemUrl($params) . 'viewinvoice.php?id=' . (int) $invoiceId;
 }
 
-function ssentezo_pollUrl(array $params, $invoiceId)
+function ssentezo_pollUrl(array $params, $invoiceId, $reference)
 {
-    $token = ssentezo_pollToken(isset($params['apiKey']) ? $params['apiKey'] : '', $invoiceId);
+    $apiKey = isset($params['apiKey']) ? $params['apiKey'] : '';
+    $token = ssentezo_pollToken($apiKey, $invoiceId, $reference);
     return ssentezo_systemUrl($params)
         . 'modules/gateways/callback/check_payment.php?invoiceid=' . (int) $invoiceId
+        . '&reference=' . rawurlencode((string) $reference)
         . '&token=' . rawurlencode($token);
 }
 
-function ssentezo_returnUrl(array $params, $invoiceId)
+function ssentezo_returnUrl(array $params, $invoiceId, $reference)
 {
-    $token = ssentezo_pollToken(isset($params['apiKey']) ? $params['apiKey'] : '', $invoiceId);
+    $apiKey = isset($params['apiKey']) ? $params['apiKey'] : '';
+    $token = ssentezo_pollToken($apiKey, $invoiceId, $reference);
     return ssentezo_systemUrl($params)
         . 'modules/gateways/ssentezo/return.php?invoiceid=' . (int) $invoiceId
+        . '&reference=' . rawurlencode((string) $reference)
         . '&token=' . rawurlencode($token);
 }
 
@@ -362,24 +463,31 @@ function ssentezo_page($title, $bodyHtml)
 
 function ssentezo_waitingPage(array $params, $invoiceId, $reference, $message)
 {
-    $pollUrl = ssentezo_pollUrl($params, $invoiceId);
+    $pollUrl = ssentezo_pollUrl($params, $invoiceId, $reference);
     $invoiceUrl = ssentezo_invoiceUrl($params, $invoiceId);
     $body = '<div class="spinner" id="ssentezo-spinner"></div>'
         . '<h1 id="ssentezo-title">Waiting for payment</h1>'
         . '<p id="ssentezo-text">' . ssentezo_h($message) . '</p>'
         . ($reference !== '' ? '<div class="ref">Reference: ' . ssentezo_h($reference) . '</div>' : '')
-        . '<a class="btn" href="' . ssentezo_h($invoiceUrl) . '">Back to invoice</a>'
+        . '<p id="ssentezo-note" style="font-size:13px;">If the money has already left the phone or card, do not pay again. This page is confirming it with Ssentezo.</p>'
+        . '<a class="btn" id="ssentezo-again" href="#" style="display:none;">Check again</a>'
+        . '<a class="btn" href="' . ssentezo_h($invoiceUrl) . '" style="background:#6c757d;">Back to invoice</a>'
         . '<script>
         (function () {
             var attempts = 0;
             var pollUrl = ' . json_encode($pollUrl, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';
             var invoiceUrl = ' . json_encode($invoiceUrl, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';
+            var again = document.getElementById("ssentezo-again");
+            function showSlow() {
+                document.getElementById("ssentezo-spinner").style.display = "none";
+                document.getElementById("ssentezo-title").textContent = "Still confirming";
+                document.getElementById("ssentezo-text").textContent = "Ssentezo has not confirmed this payment yet. If money was deducted, wait on this page or check again. Do not start a second payment.";
+                again.style.display = "inline-block";
+            }
             function tick() {
                 attempts++;
-                if (attempts > 60) {
-                    document.getElementById("ssentezo-spinner").style.display = "none";
-                    document.getElementById("ssentezo-title").textContent = "Still waiting";
-                    document.getElementById("ssentezo-text").textContent = "Approval is taking longer than expected. Open the invoice to confirm whether the payment was received.";
+                if (attempts > 40) {
+                    showSlow();
                     return;
                 }
                 fetch(pollUrl, {credentials: "same-origin", cache: "no-store"})
@@ -389,11 +497,26 @@ function ssentezo_waitingPage(array $params, $invoiceId, $reference, $message)
                             window.location.href = invoiceUrl;
                             return;
                         }
-                        setTimeout(tick, 2000);
+                        if (data && data.status === "failed") {
+                            document.getElementById("ssentezo-spinner").style.display = "none";
+                            document.getElementById("ssentezo-title").textContent = "Payment was not completed";
+                            document.getElementById("ssentezo-text").textContent = "Ssentezo reported that this payment failed. You can return to the invoice and try again.";
+                            return;
+                        }
+                        setTimeout(tick, 3000);
                     })
-                    .catch(function () { setTimeout(tick, 2000); });
+                    .catch(function () { setTimeout(tick, 3000); });
             }
-            setTimeout(tick, 2000);
+            again.addEventListener("click", function (event) {
+                event.preventDefault();
+                attempts = 0;
+                again.style.display = "none";
+                document.getElementById("ssentezo-spinner").style.display = "block";
+                document.getElementById("ssentezo-title").textContent = "Waiting for payment";
+                document.getElementById("ssentezo-text").textContent = "Checking Ssentezo again.";
+                tick();
+            });
+            setTimeout(tick, 3000);
         }());
         </script>';
 
