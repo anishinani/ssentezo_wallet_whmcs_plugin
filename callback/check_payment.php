@@ -1,37 +1,29 @@
 <?php
-require_once __DIR__ . '/../../../init.php';
-require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 
-use WHMCS\Database\Capsule;
+require_once dirname(__DIR__) . '/ssentezo/common.php';
+ssentezo_bootstrap();
 
-// Get invoice ID from query parameter
-$invoiceId = isset($_GET['invoiceid']) ? (int)$_GET['invoiceid'] : 0;
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate');
 
-if ($invoiceId <= 0) {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'error', 'message' => 'Invalid invoice ID']);
-    exit();
+$params = function_exists('getGatewayVariables') ? getGatewayVariables('ssentezo') : array();
+$invoiceId = isset($_GET['invoiceid']) ? (int) $_GET['invoiceid'] : 0;
+$token = isset($_GET['token']) ? (string) $_GET['token'] : '';
+$apiKey = isset($params['apiKey']) ? (string) $params['apiKey'] : '';
+
+if (empty($params['type']) || $invoiceId <= 0 || $apiKey === '' || !hash_equals(ssentezo_pollToken($apiKey, $invoiceId), $token)) {
+    http_response_code(403);
+    echo json_encode(array('status' => 'error'));
+    exit;
 }
 
-// Get invoice status from database
-$invoice = Capsule::table('tblinvoices')
-    ->where('id', $invoiceId)
-    ->first();
-
+$invoice = ssentezo_invoiceSnapshot($invoiceId);
 if (!$invoice) {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'error', 'message' => 'Invoice not found']);
-    exit();
+    http_response_code(404);
+    echo json_encode(array('status' => 'error'));
+    exit;
 }
 
-// Basic security: Only return minimal information
-// Check if invoice is paid
-$status = ($invoice->status === 'Paid') ? 'paid' : 'pending';
-
-// Return only the necessary status information
-header('Content-Type: application/json');
-echo json_encode([
-    'status' => $status
-]);
-?>
-
+$paid = strtolower($invoice['status']) === 'paid' || $invoice['balance'] <= 0;
+echo json_encode(array('status' => $paid ? 'paid' : 'pending'));
+exit;

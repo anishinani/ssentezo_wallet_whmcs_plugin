@@ -1,131 +1,153 @@
 <?php
 
-// === File Includes ===
-// These must be at the very top to initialize the WHMCS environment.
-require_once __DIR__ . '/../../../init.php';
-require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
-require_once __DIR__ . '/../../../includes/invoicefunctions.php';
+require_once dirname(__DIR__) . '/ssentezo/common.php';
+ssentezo_bootstrap();
 
-use WHMCS\Database\Capsule;
+header('Content-Type: text/plain; charset=utf-8');
 
-// === Audit Trail Logging ===
-// This logs key events in a structured, easy-to-read format.
-$auditLogFile = __DIR__ . '/payment_audit_trail.log';
-
-function logAuditTrail($message, $data = []) {
-    global $auditLogFile;
-    $logEntry = date('Y-m-d H:i:s') . ' - ';
-
-    $logEntry .= $message;
-
-    if (!empty($data)) {
-        $logEntry .= ' | Details: ' . json_encode($data);
-    }
-
-    $logEntry .= "\n";
-    file_put_contents($auditLogFile, $logEntry, FILE_APPEND);
-}
-
-// === Gateway Module Name (MUST match your module folder) ===
 $gatewayModuleName = 'ssentezo';
+$params = function_exists('getGatewayVariables') ? getGatewayVariables($gatewayModuleName) : array();
+$gatewayName = isset($params['name']) && $params['name'] !== '' ? (string) $params['name'] : 'Ssentezo Wallet';
 
-// === Capture and Decode JSON Payload ===
-$input = @file_get_contents('php://input');
-$payload = json_decode($input, true);
-
-// Log incoming request to the audit trail
-logAuditTrail("Incoming Request", ['payload_length' => strlen($input)]);
-
-// Check if the 'data' key exists before proceeding
-if (!isset($payload['data'])) {
-    logAuditTrail("❌ 'data' key is missing from payload", ['payload' => $payload]);
-    http_response_code(400);
-    die();
+if (empty($params['type'])) {
+    http_response_code(503);
+    echo 'Module Not Activated';
+    exit;
 }
 
-$data = $payload['data']; // Access the nested 'data' object
+$data = ssentezo_callbackPayload();
+$externalReference = ssentezo_field($data, 'externalReference');
+$reportedStatus = ssentezo_statusFrom($data);
 
-// === Validate Required Fields ===
-if (
-    !isset($data['externalReference']) ||
-    !isset($data['transactionStatus']) ||
-    !isset($data['financialTransactionId'])
-) {
-    logAuditTrail("❌ Missing Required Fields", $data);
+if ($externalReference === '') {
+    ssentezo_log($gatewayName, $data, 'Invalid Callback');
     http_response_code(400);
-    die();
+    echo 'Missing reference';
+    exit;
 }
 
-// === Assign Variables (using correct field names from the wallet response) ===
-$externalReference = $data['externalReference'];
-$status            = strtolower($data['transactionStatus']);
-$transactionId     = $data['financialTransactionId'];
+$invoiceId = ssentezo_invoiceIdFromReference($externalReference);
+if ($invoiceId <= 0) {
+    ssentezo_log($gatewayName, array('reference' => $externalReference), 'Invalid Invoice Reference');
+    http_response_code(400);
+    echo 'Invalid reference';
+    exit;
+}
 
-// === Extract Invoice ID from External Reference ===
-// The externalReference is in the format 'invoiceId-timestamp-random'
-// We need to extract only the invoiceId part
-$parts = explode('-', $externalReference, 2);
-$invoiceId = $parts[0];
-
-// Log key variables for tracking
-logAuditTrail("Processing Transaction", [
-    'external_reference' => $externalReference,
-    'invoice_id'         => $invoiceId,
-    'transaction_id'     => $transactionId,
-    'status'             => $status
-]);
-
-// === Check Transaction Status ===
-if ($status !== "succeeded") {
-    logAuditTrail("⚠️ Transaction Not Successful", ['invoice_id' => $invoiceId, 'status' => $status]);
+if (!ssentezo_isSuccessStatus($reportedStatus)) {
+    ssentezo_log($gatewayName, array(
+        'reference' => $externalReference,
+        'invoice' => $invoiceId,
+        'status' => $reportedStatus,
+    ), 'Unsuccessful');
     http_response_code(200);
-    die();
+    echo 'OK';
+    exit;
 }
 
-// === Validate Invoice ID & Transaction ID ===
-$invoiceId = checkCbInvoiceID($invoiceId, $gatewayModuleName);
-checkCbTransID($transactionId);
-
-// === Get Invoice Details ===
-$invoice = Capsule::table('tblinvoices')->where('id', $invoiceId)->first();
-
-// Check if invoice exists
+$invoice = ssentezo_invoiceSnapshot($invoiceId);
 if (!$invoice) {
-    logAuditTrail("❌ Invoice Not Found", ['invoice_id' => $invoiceId]);
+    ssentezo_log($gatewayName, array('invoice' => $invoiceId, 'reference' => $externalReference), 'Invoice Not Found');
     http_response_code(404);
-    echo "Invoice not found";
-    exit();
+    echo 'Invoice not found';
+    exit;
 }
 
-// Check if invoice is already paid
-if ($invoice->status === 'Paid') {
-    logAuditTrail("⚠️ Invoice Already Paid", ['invoice_id' => $invoiceId, 'transaction_id' => $transactionId]);
+if (strtolower($invoice['status']) === 'paid' || $invoice['balance'] <= 0) {
     http_response_code(200);
-    echo "OK";
-    exit();
+    echo 'OK';
+    exit;
 }
 
-$amountPaid = $invoice->total;
+$verified = ssentezo_apiPost($params, 'get_status/' . rawurlencode($externalReference), array(), 3);
+$verifiedData = array();
+if (isset($verified['json']['data']) && is_array($verified['json']['data'])) {
+    $verifiedData = $verified['json']['data'];
+}
 
-logAuditTrail("Invoice Details Retrieved", ['invoice_id' => $invoiceId, 'amount' => $amountPaid, 'status' => $invoice->status]);
+if (!$verified['ok']) {
+    ssentezo_log($gatewayName, array(
+        'reference' => $externalReference,
+        'invoice' => $invoiceId,
+        'http_code' => $verified['httpCode'],
+        'error' => $verified['error'],
+    ), 'Verification Failed');
+    http_response_code(503);
+    echo 'Retry';
+    exit;
+}
 
-// === Log Transaction First (WHMCS Convention) ===
-logTransaction($gatewayModuleName, $data, "Successful");
+if (!ssentezo_isSuccessStatus(ssentezo_statusFrom($verifiedData))) {
+    ssentezo_log($gatewayName, array(
+        'reference' => $externalReference,
+        'invoice' => $invoiceId,
+        'status' => ssentezo_statusFrom($verifiedData),
+    ), 'Not Successful');
+    http_response_code(200);
+    echo 'OK';
+    exit;
+}
 
-// === Record Payment ===
-addInvoicePayment(
-    $invoiceId,
-    $transactionId,
-    $amountPaid,
-    0,
-    $gatewayModuleName
-);
+$transactionId = ssentezo_field($verifiedData, 'financialTransactionId');
+if ($transactionId === '') {
+    $transactionId = ssentezo_field($data, 'financialTransactionId');
+}
+if ($transactionId === '') {
+    $transactionId = ssentezo_field($verifiedData, 'ssentezoWalletReference');
+}
+if ($transactionId === '') {
+    $transactionId = $externalReference;
+}
 
-// === Log Success ===
-logAuditTrail("✅ Payment Applied to Invoice", ['invoice_id' => $invoiceId, 'transaction_id' => $transactionId, 'amount_paid' => $amountPaid]);
+if (ssentezo_transactionExists($transactionId)) {
+    http_response_code(200);
+    echo 'OK';
+    exit;
+}
 
-// === Return Simple Success Response ===
-// WHMCS will handle the redirect to the appropriate page
+if (function_exists('checkCbInvoiceID')) {
+    $invoiceId = checkCbInvoiceID($invoiceId, $gatewayModuleName);
+}
+if (function_exists('checkCbTransID')) {
+    checkCbTransID($transactionId);
+}
+
+$applyAmount = $invoice['balance'];
+$verifiedCurrency = strtoupper(ssentezo_field($verifiedData, 'currency'));
+if (isset($verifiedData['amount']) && is_numeric($verifiedData['amount'])) {
+    $verifiedAmount = round((float) $verifiedData['amount'], 2);
+    $sameCurrency = $verifiedCurrency === '' || $invoice['currency'] === '' || $verifiedCurrency === $invoice['currency'];
+    if ($sameCurrency && $verifiedAmount > 0 && ($verifiedAmount + 0.01) < $invoice['balance']) {
+        $applyAmount = $verifiedAmount;
+    }
+}
+
+try {
+    addInvoicePayment(
+        $invoiceId,
+        $transactionId,
+        $applyAmount,
+        0,
+        $gatewayModuleName
+    );
+} catch (Throwable $e) {
+    ssentezo_log($gatewayName, array(
+        'invoice' => $invoiceId,
+        'transaction' => $transactionId,
+        'error' => $e->getMessage(),
+    ), 'Payment Apply Failed');
+    http_response_code(500);
+    echo 'ERROR';
+    exit;
+}
+
+ssentezo_log($gatewayName, array(
+    'invoice' => $invoiceId,
+    'reference' => $externalReference,
+    'transaction' => $transactionId,
+    'amount' => $applyAmount,
+), 'Success');
+
 http_response_code(200);
-echo "OK";
-exit();
+echo 'OK';
+exit;

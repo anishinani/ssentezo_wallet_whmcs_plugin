@@ -1,113 +1,76 @@
-I'll add documentation links for the Ssentezo wallet to the README:
+# Ssentezo Wallet for WHMCS
 
-```markdown
-# Ssentezo Wallet Payment Gateway for WHMCS
+Clients pay a WHMCS invoice with Ssentezo mobile money or with Visa / Mastercard. Card numbers are entered on Ssentezo's hosted checkout, not in WHMCS.
 
-This document provides step-by-step instructions for installing and configuring the Ssentezo Wallet payment gateway module for your WHMCS installation.
-
-## Overview
-
-The Ssentezo Wallet payment gateway allows your clients to pay invoices directly using their Ssentezo mobile wallet. This integration provides a seamless payment experience and supports automatic payment confirmation.
+The module targets WHMCS 8 and 9. Payment starts in its own script instead of posting back to the invoice page, and the callback loads WHMCS gateway functions with `App::load_function()`.
 
 ## Requirements
 
-- WHMCS 7.0 or higher
-- PHP 7.2 or higher
-- Ssentezo Wallet API credentials (username and API key)
-- SSL certificate installed on your domain (recommended for security)
+- WHMCS 8.0 or newer (WHMCS 9 included)
+- PHP 7.2 or newer, with curl and OpenSSL
+- A Ssentezo Wallet API username and API key
+- A public HTTPS URL for this WHMCS install
 
 ## Installation
 
-### Step 1: Download and Upload Files
-
-1. Download the Ssentezo payment gateway module files
-2. Extract the downloaded ZIP file
-3. Upload the following files to your WHMCS installation:
-   - Upload `ssentezo.php` to `/path/to/whmcs/modules/gateways/`
-   - Upload `callback/ssentezo.php` to `/path/to/whmcs/modules/gateways/callback/`
-
-### Step 2: Install the Payment Gateway
-
-1. Log in to your WHMCS admin panel
-2. Navigate to **Setup** > **Payment Gateways** 
-3. Click on the **All Payment Gateways** tab
-4. Find "Ssentezo Wallet Payment Gateway" in the list and click **Activate**
-
-### Step 3: Configure the Gateway
-
-1. After activation, click on the **Manage Existing Gateways** tab
-2. Find "Ssentezo Wallet Payment Gateway" in the list of active payment gateways
-3. Enter the following required information:
-   - **API Username**: Your Ssentezo API username
-   - **API Key**: Your Ssentezo API key
-   - **Callback URL**: The URL to receive payment notifications (default should work in most cases)
-4. Click **Save Changes**
-
-## Testing the Gateway
-
-Before going live, we recommend testing the gateway to ensure everything is working correctly:
-
-1. Create a test invoice in WHMCS
-2. View the invoice and select "Pay with Ssentezo Wallet" as the payment method
-3. Enter a test mobile number
-4. Confirm that the payment request is sent to Ssentezo
-5. Verify that the callback properly marks the invoice as paid
-
-## Troubleshooting
-
-### Payment Requests Not Sending
-
-- Verify your API credentials are correct
-- Check your server's outgoing connections (may require allowing outbound connections to wallet.ssentezo.com)
-- Enable WHMCS gateway logs for more detailed error information
-
-### Callbacks Not Working
-
-- Ensure your callback URL is publicly accessible
-- Check that your server allows incoming connections to the callback script
-- Verify that the callback URL is correctly configured in your Ssentezo account
-
-### Invoice Not Marked as Paid
-
-- Check WHMCS transaction logs for errors
-- Verify that the callback script is receiving the correct parameters
-- Ensure the script has permission to update invoice status
-
-## Ssentezo Documentation
-
-For detailed information on the Ssentezo Wallet API:
-
-- **API Documentation**: [https://wallet.ssentezo.com/documentation](https://wallet.ssentezo.com/documentation)
-- **Developer Portal**: [https://developer.ssentezo.com](https://developer.ssentezo.com)
-- **Integration Guide**: [https://wallet.ssentezo.com/integration-guide.pdf](https://wallet.ssentezo.com/integration-guide.pdf)
-
-## Support
-
-For additional support with this module, please contact:
-- Email: support@example.com
-- Phone: +1-234-567-8910
-
-For Ssentezo Wallet specific inquiries:
-- Ssentezo Support: support@ssentezo.com
-- Ssentezo Helpline: +256-XXX-XXX-XXX
-
-## Version History
-
-- **1.0.0** - Initial release
-- **1.1.0** - Added unique reference generation for payment retries
-- **1.2.0** - Improved user interface and error handling
-
-## License
-
-This payment gateway module is released under the MIT License.
+1. Copy the files into the WHMCS root so the paths match exactly:
 
 ```
+modules/gateways/ssentezo.php
+modules/gateways/ssentezo/common.php
+modules/gateways/ssentezo/pay.php
+modules/gateways/ssentezo/return.php
+modules/gateways/callback/ssentezo.php
+modules/gateways/callback/check_payment.php
+```
 
-I've added a new "Ssentezo Documentation" section with links to:
-- API Documentation
-- Developer Portal
-- Integration Guide
+2. Log in to the WHMCS admin area.
+3. Open **Configuration > System Settings > Payment Gateways**. On older WHMCS 8 layouts this is **Setup > Payments > Payment Gateways**.
+4. Open **All Payment Gateways**, find **Ssentezo Wallet**, and click **Activate**.
+5. Open the active gateway and set:
+   - **API Username**: the username from the Ssentezo Wallet API Access page
+   - **API Key**: the matching API key
+   - **Sandbox**: tick this only when those credentials belong to `https://devwallet.ssentezo.com`
+   - **Callback URL**: leave this blank
+6. Save the gateway.
+7. Confirm **Show on Order Form** is enabled if clients should choose Ssentezo at checkout.
 
-I've also added Ssentezo-specific support contact information under the Support section.
+If a Callback URL was saved by an older version of this module, clear it and save again. A blank value uses:
 
-Note: The URLs in this README are placeholders. You should replace them with the actual URLs for Ssentezo's documentation and support resources. If you have the correct links, please let me know, and I can update the README with the accurate information.
+```
+https://your-whmcs-domain/modules/gateways/callback/ssentezo.php
+```
+
+Replace `your-whmcs-domain` with the WHMCS System URL, including any subdirectory. Ssentezo's servers must be able to reach that address over HTTPS. The callback does not use a WHMCS login.
+
+Set a Callback URL only when WHMCS is behind a proxy and **Configuration > System Settings > General Settings > General** shows the wrong System URL. The value must be the full `callback/ssentezo.php` address above.
+
+## What the client sees
+
+On an unpaid invoice the client can:
+
+- Enter a mobile number and approve the prompt on the phone.
+- For UGX invoices, choose **Pay with Visa or Mastercard** and finish on Ssentezo's checkout page.
+
+Card checkout accepts UGX 500 to UGX 7,000,000. The card fee stays on the Ssentezo wallet. It is not added to the WHMCS invoice.
+
+## How an invoice becomes paid
+
+1. WHMCS sends the collection to Ssentezo with a unique reference and the callback URL.
+2. Ssentezo posts the result to `modules/gateways/callback/ssentezo.php`.
+3. The callback asks Ssentezo for the transaction status.
+4. When that status is succeeded, WHMCS records the payment and marks the invoice paid.
+
+Returning to the invoice in the browser does not by itself mark it paid. Check **Billing > Gateway Log** if a payment stays unpaid.
+
+## Test before going live
+
+1. Tick **Sandbox** and save the devwallet API credentials.
+2. Create an unpaid UGX invoice.
+3. Pay it with a sandbox mobile number, then with a sandbox card.
+4. Confirm the invoice status is Paid and the Gateway Log shows Success.
+5. Clear **Sandbox**, enter the live API credentials, and save.
+
+## Upgrading an existing install
+
+Replace all six files listed above. Deactivate and activate the gateway only if WHMCS does not show the new Sandbox setting. Clear any previously saved Callback URL so notifications hit `callback/ssentezo.php`.
